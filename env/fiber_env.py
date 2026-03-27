@@ -98,9 +98,12 @@ class FiberOrientationEnv(gymnasium.Env):
         Returns:
             Tupla (observación, info).
         """
+        # super().reset() inicializa self.np_random con la semilla dada
         super().reset(seed=seed)
 
+        # Sortear un ángulo objetivo aleatorio; el agente debe encontrarlo
         self._theta_objetivo = self.np_random.uniform(0.0, 180.0)
+        # La estimación inicial siempre arranca en 90° (punto neutro del rango)
         self._theta_estimado = INITIAL_THETA_ESTIMATE
         self._step_count = 0
 
@@ -128,7 +131,9 @@ class FiberOrientationEnv(gymnasium.Env):
         Returns:
             Tupla (obs, reward, terminated, truncated, info).
         """
+        # Convertir acción ∈ [-1, 1] a un delta angular ∈ [-MAX_DELTA_DEG, MAX_DELTA_DEG]
         delta = float(action[0]) * MAX_DELTA_DEG
+        # Clampear a [0°, 180°) para mantener el ángulo dentro del espacio válido
         self._theta_estimado = float(np.clip(self._theta_estimado + delta, 0.0, 179.999))
         self._step_count += 1
 

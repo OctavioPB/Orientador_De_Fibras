@@ -32,17 +32,13 @@ def generate_fiber_image(
     fiber_length_range = (30, 60)
     fiber_width_range = (4, 8)
 
-    angle_rad = np.deg2rad(theta)
-    dx = np.cos(angle_rad)
-    dy = np.sin(angle_rad)
-
     for _ in range(n_fibers):
         cx = rng.randint(0, size)
         cy = rng.randint(0, size)
         length = rng.randint(fiber_length_range[0], fiber_length_range[1] + 1)
         width = rng.randint(fiber_width_range[0], fiber_width_range[1] + 1)
 
-        # Variación angular pequeña para realismo
+        # Variación angular pequeña (±5°) para simular irregularidades reales de tinción
         angle_jitter = rng.uniform(-5.0, 5.0)
         fiber_angle = theta + angle_jitter
 

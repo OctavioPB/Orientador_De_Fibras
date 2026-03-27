@@ -41,20 +41,22 @@ def evaluate(
     logger.info("Cargando modelo desde '%s'.", model_path)
     model = PPO.load(model_path)
 
+    # Distribuir ángulos uniformemente en [0°, 180°) para cubrir todo el espacio
     thetas_true = np.linspace(0.0, 180.0, n_images, endpoint=False)
     results = []
 
+    # Entorno sin VecEnv: se manipula directamente para inyectar ángulos conocidos
     env = FiberOrientationEnv()
 
     for theta_true in thetas_true:
-        # Inyectar theta conocido directamente en el entorno
+        # Inyectar theta conocido directamente en el entorno (bypass de reset aleatorio)
         env._theta_objetivo = float(theta_true)
-        env._theta_estimado = 90.0
+        env._theta_estimado = 90.0  # estimación inicial neutral
         env._step_count = 0
         env._img_objetivo = generate_fiber_image(float(theta_true), size=env.size)
         env._img_estimada = generate_fiber_image(env._theta_estimado, size=env.size)
 
-        # Observación en formato CHW float32 normalizado (lo que espera CnnPolicy)
+        # Construir observación en formato (1, C, H, W) float32 que espera CnnPolicy
         obs = _to_policy_obs(env._get_obs())
 
         done = False
@@ -76,6 +78,7 @@ def evaluate(
 
     errors = [r[2] for r in results]
     mae = float(np.mean(errors))
+    # Porcentaje de predicciones dentro del umbral de prototipo (5°) y producción (10°)
     pct_lt5 = float(np.mean([e < 5.0 for e in errors]) * 100)
     pct_lt10 = float(np.mean([e < 10.0 for e in errors]) * 100)
 
@@ -95,7 +98,8 @@ def evaluate(
 def _to_policy_obs(obs_hwc: np.ndarray) -> np.ndarray:
     """Convierte observación (H, W, C) uint8 → (1, C, H, W) float32 normalizado.
 
-    Replica lo que hacen DummyVecEnv + VecTransposeImage + normalize_images.
+    Replica manualmente lo que hacen DummyVecEnv + VecTransposeImage + normalize_images,
+    permitiendo usar el modelo sin un entorno vectorizado completo.
 
     Args:
         obs_hwc: Observación en formato (H, W, C) uint8.
@@ -103,6 +107,7 @@ def _to_policy_obs(obs_hwc: np.ndarray) -> np.ndarray:
     Returns:
         Array (1, C, H, W) float32 listo para model.predict.
     """
-    # HWC → CHW
+    # (H, W, C) → (C, H, W): transponer ejes para formato CHW que espera CnnPolicy
     obs_chw = np.transpose(obs_hwc, (2, 0, 1)).astype(np.float32) / 255.0
-    return obs_chw[np.newaxis, ...]  # (1, C, H, W)
+    # Agregar dimensión de batch: (C, H, W) → (1, C, H, W)
+    return obs_chw[np.newaxis, ...]

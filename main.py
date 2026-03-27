@@ -62,9 +62,10 @@ def cmd_infer(args: argparse.Namespace) -> None:
     from stable_baselines3 import PPO
     from stable_baselines3.common.vec_env import DummyVecEnv, VecTransposeImage
 
-    from env.fiber_env import FiberOrientationEnv, angular_distance
+    from env.fiber_env import FiberOrientationEnv
+    from env.synthetic_generator import generate_fiber_image
 
-    # Cargar imagen
+    # Cargar imagen en escala de grises y redimensionar a 128×128
     img = cv2.imread(args.image, cv2.IMREAD_GRAYSCALE)
     if img is None:
         logger.error("No se pudo cargar la imagen: %s", args.image)
@@ -72,26 +73,29 @@ def cmd_infer(args: argparse.Namespace) -> None:
 
     img = cv2.resize(img, (128, 128))
 
-    # Cargar modelo
+    # Cargar modelo PPO desde disco
     model = PPO.load(args.model)
 
-    # Preparar entorno para inferencia
+    # Crear entorno vectorizado (requerido por CnnPolicy de SB3)
     def make_env():
         return FiberOrientationEnv()
 
     vec_env = DummyVecEnv([make_env])
-    vec_env = VecTransposeImage(vec_env)
+    vec_env = VecTransposeImage(vec_env)  # convierte (H,W,C) → (C,H,W) para CnnPolicy
+    vec_env.reset()
 
-    obs = vec_env.reset()
-
-    # Inyectar la imagen real en el entorno
+    # Inyectar la imagen real como objetivo; la estimación inicial parte de 90°
     raw_env: FiberOrientationEnv = vec_env.envs[0]  # type: ignore[attr-defined]
     raw_env._img_objetivo = img
     raw_env._theta_estimado = 90.0
     raw_env._step_count = 0
+    raw_env._img_estimada = generate_fiber_image(90.0, size=raw_env.size)
 
-    img_norm = img.astype(np.float32) / 255.0
-    obs = img_norm[..., np.newaxis][np.newaxis, ...]  # (1, H, W, 1)  # (1, 1, H, W)
+    # Construir la observación inicial con los 2 canales esperados por el modelo:
+    # canal 0 = imagen objetivo (real), canal 1 = imagen estimada inicial (θ=90°)
+    # La forma final debe ser (1, C, H, W) = (1, 2, 128, 128) en float32 normalizado
+    obs_hwc = raw_env._get_obs()  # (H, W, 2) uint8
+    obs = np.transpose(obs_hwc, (2, 0, 1)).astype(np.float32)[np.newaxis] / 255.0  # (1, 2, H, W)
 
     done = False
     theta_estimated = 90.0
@@ -134,6 +138,9 @@ def cmd_infer(args: argparse.Namespace) -> None:
 def estimate_fiber_orientation(mask: np.ndarray, model_path: str) -> float:
     """Estima el ángulo de orientación de una fibra a partir de su máscara.
 
+    Punto de integración con Mask R-CNN: recibe la máscara binaria de una fibra,
+    la redimensiona a 128×128 y ejecuta el agente PPO para predecir el ángulo.
+
     Args:
         mask: Máscara binaria de una fibra, shape arbitrario, dtype uint8.
         model_path: Ruta al modelo PPO guardado.
@@ -145,7 +152,9 @@ def estimate_fiber_orientation(mask: np.ndarray, model_path: str) -> float:
     from stable_baselines3.common.vec_env import DummyVecEnv, VecTransposeImage
 
     from env.fiber_env import FiberOrientationEnv
+    from env.synthetic_generator import generate_fiber_image
 
+    # Redimensionar máscara al tamaño esperado por el modelo
     img = cv2.resize(mask, (128, 128))
 
     model = PPO.load(model_path)
@@ -154,16 +163,19 @@ def estimate_fiber_orientation(mask: np.ndarray, model_path: str) -> float:
         return FiberOrientationEnv()
 
     vec_env = DummyVecEnv([make_env])
-    vec_env = VecTransposeImage(vec_env)
+    vec_env = VecTransposeImage(vec_env)  # convierte (H,W,C) → (C,H,W) para CnnPolicy
     vec_env.reset()
 
+    # Inyectar la máscara real como objetivo; la estimación inicial parte de 90°
     raw_env: FiberOrientationEnv = vec_env.envs[0]  # type: ignore[attr-defined]
     raw_env._img_objetivo = img
     raw_env._theta_estimado = 90.0
     raw_env._step_count = 0
+    raw_env._img_estimada = generate_fiber_image(90.0, size=raw_env.size)
 
-    img_norm = img.astype(np.float32) / 255.0
-    obs = img_norm[..., np.newaxis][np.newaxis, ...]  # (1, H, W, 1)
+    # Observación inicial: (1, 2, H, W) float32 normalizado
+    obs_hwc = raw_env._get_obs()  # (H, W, 2) uint8
+    obs = np.transpose(obs_hwc, (2, 0, 1)).astype(np.float32)[np.newaxis] / 255.0  # (1, 2, H, W)
 
     done = False
     theta_estimated = 90.0

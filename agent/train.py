@@ -6,11 +6,7 @@ import os
 import numpy as np
 import torch
 from stable_baselines3 import PPO
-from stable_baselines3.common.callbacks import (
-    BaseCallback,
-    EvalCallback,
-    StopTrainingOnRewardThreshold,
-)
+from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.vec_env import DummyVecEnv, VecTransposeImage
 
 from env.fiber_env import FiberOrientationEnv
@@ -105,9 +101,12 @@ def train(
     def make_env():
         return FiberOrientationEnv()
 
+    # DummyVecEnv envuelve el entorno en un vector de 1 instancia (requerido por SB3)
+    # VecTransposeImage convierte las observaciones de (H,W,C) a (C,H,W) para CnnPolicy
     env = DummyVecEnv([make_env])
     env = VecTransposeImage(env)
 
+    # Entorno de evaluación separado para no contaminar el estado de entrenamiento
     eval_env_raw = DummyVecEnv([make_env])
     eval_env = VecTransposeImage(eval_env_raw)
 
@@ -120,16 +119,18 @@ def train(
         n_epochs=10,
         gamma=0.99,
         verbose=1,
-        tensorboard_log=None,
+        tensorboard_log=log_dir,  # directorio para logs de TensorBoard (tensorboard --logdir logs/)
         policy_kwargs={"normalize_images": True},
     )
 
+    # Guarda una copia del modelo cada 50 000 pasos para poder recuperar versiones anteriores
     checkpoint_callback = _CheckpointCallback(
         save_freq=50_000,
         save_path=os.path.dirname(save_path) or "models",
         name_prefix=os.path.basename(save_path),
     )
 
+    # Detiene el entrenamiento cuando el MAE baja de 8° por 3 evaluaciones consecutivas
     early_stop_callback = MeanAngularErrorCallback(
         eval_env=eval_env,
         mae_threshold=8.0,
